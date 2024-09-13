@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"unsafe"
 )
 
 type MessageType byte
@@ -31,7 +30,7 @@ type PairsMessage struct {
 }
 
 type PairData struct {
-	PairAddress     [32]byte
+	PairAddress     []byte
 	TokenName       string
 	TokenSymbol     string
 	BaseTokenSymbol string
@@ -41,7 +40,7 @@ type PairData struct {
 }
 
 func (m *LatestBlockHashMessage) UnmarshalBinary(data []byte) error {
-	if len(data) < 73 {
+	if len(data) < 5 { // Minimum length for version and type
 		return errors.New("insufficient data for LatestBlockHashMessage")
 	}
 
@@ -68,7 +67,7 @@ func (m *LatestBlockHashMessage) UnmarshalBinary(data []byte) error {
 }
 
 func (m *PairsMessage) UnmarshalBinary(data []byte) error {
-	if len(data) < 11 {
+	if len(data) < 3 { // Minimum length for version and type
 		return errors.New("insufficient data for PairsMessage")
 	}
 
@@ -93,43 +92,63 @@ func (m *PairsMessage) UnmarshalBinary(data []byte) error {
 }
 
 func (p *PairData) UnmarshalBinary(data []byte) (int, error) {
-	if len(data) < 64 {
+	if len(data) < 33 { // Minimum length for pair address
 		return 0, errors.New("insufficient data for PairData")
 	}
 
-	copy(p.PairAddress[:], data[:32])
+	p.PairAddress = make([]byte, 32)
+	copy(p.PairAddress, data[:32])
 
-	nameEnd := strings.IndexByte(string(data[32:]), 0)
-	if nameEnd == -1 {
-		return 0, errors.New("invalid token name")
+	current := 32
+
+	// Helper function to read null-terminated string
+	readString := func() (string, int, error) {
+		end := strings.IndexByte(string(data[current:]), 0)
+		if end == -1 {
+			return "", 0, errors.New("invalid string")
+		}
+		s := string(data[current : current+end])
+		return s, current + end + 1, nil
 	}
-	p.TokenName = string(data[32 : 32+nameEnd])
 
-	symbolStart := 32 + nameEnd + 1
-	symbolEnd := strings.IndexByte(string(data[symbolStart:]), 0)
-	if symbolEnd == -1 {
-		return 0, errors.New("invalid token symbol")
+	var err error
+	var next int
+
+	p.TokenName, next, err = readString()
+	if err != nil {
+		return 0, err
 	}
-	p.TokenSymbol = string(data[symbolStart : symbolStart+symbolEnd])
+	current = next
 
-	baseSymbolStart := symbolStart + symbolEnd + 1
-	baseSymbolEnd := strings.IndexByte(string(data[baseSymbolStart:]), 0)
-	if baseSymbolEnd == -1 {
-		return 0, errors.New("invalid base token symbol")
+	p.TokenSymbol, next, err = readString()
+	if err != nil {
+		return 0, err
 	}
-	p.BaseTokenSymbol = string(data[baseSymbolStart : baseSymbolStart+baseSymbolEnd])
+	current = next
 
-	priceStart := baseSymbolStart + baseSymbolEnd + 1
-	p.Price = *(*float64)(unsafe.Pointer(&data[priceStart]))
-	p.Volume = *(*float64)(unsafe.Pointer(&data[priceStart+8]))
+	p.BaseTokenSymbol, next, err = readString()
+	if err != nil {
+		return 0, err
+	}
+	current = next
 
-	return priceStart + 16, nil
+	if len(data[current:]) < 16 { // 8 bytes for price + 8 bytes for volume
+		return 0, errors.New("insufficient data for price and volume")
+	}
+
+	p.Price = float64(binary.LittleEndian.Uint64(data[current:]))
+	p.Volume = float64(binary.LittleEndian.Uint64(data[current+8:]))
+
+	return current + 16, nil
 }
 
 func parseMessage(message []byte) (interface{}, error) {
 	if len(message) == 0 {
 		return nil, errors.New("empty message")
 	}
+
+	fmt.Printf("Message type: %d, Length: %d\n", message[0], len(message))
+	fmt.Printf("First 20 bytes: %s\n", hex.EncodeToString(message[:20]))
 
 	switch MessageType(message[0]) {
 	case LatestBlockHashMessageType:
