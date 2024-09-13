@@ -205,15 +205,19 @@ func main() {
 					color.Green("Received pairs message: Version=%s, Number of pairs=%d, Raw data length=%d",
 						msg.Version, msg.PairsCount, len(msg.RawPairsData))
 
-					// Parse and print the first 5 pairs
-					for i := 0; i < min(5, int(msg.PairsCount)); i++ {
+					// Debug: Print the first 100 bytes of RawPairsData
+					color.Yellow("First 100 bytes of RawPairsData:")
+					fmt.Println(hex.Dump(msg.RawPairsData[:min(100, len(msg.RawPairsData))]))
+
+					// Try to parse the first pair
+					if len(msg.RawPairsData) > 0 {
 						var pair PairData
-						bytesRead, err := pair.UnmarshalBinary(msg.RawPairsData[i*128:])
+						bytesRead, err := pair.UnmarshalBinary(msg.RawPairsData)
 						if err != nil {
-							color.Red("Error parsing pair %d: %v", i, err)
+							color.Red("Error parsing first pair: %v", err)
 						} else {
-							color.Green("Pair %d: Name=%s, Symbol=%s, BaseSymbol=%s, Price=%f, Volume=%f",
-								i, pair.TokenName, pair.TokenSymbol, pair.BaseTokenSymbol, pair.Price, pair.Volume)
+							color.Green("First pair: Name=%s, Symbol=%s, BaseSymbol=%s, Price=%f, Volume=%f",
+								pair.TokenName, pair.TokenSymbol, pair.BaseTokenSymbol, pair.Price, pair.Volume)
 							color.Green("  PairAddress: %s", hex.EncodeToString(pair.PairAddress))
 							color.Green("  Bytes read: %d", bytesRead)
 						}
