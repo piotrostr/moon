@@ -25,8 +25,9 @@ type LatestBlockHashMessage struct {
 }
 
 type PairsMessage struct {
-	Version string
-	Pairs   []PairData
+	Version      string
+	PairsCount   uint32
+	RawPairsData []byte
 }
 
 type PairData struct {
@@ -36,11 +37,10 @@ type PairData struct {
 	BaseTokenSymbol string
 	Price           float64
 	Volume          float64
-	// Add other fields as needed
 }
 
 func (m *LatestBlockHashMessage) UnmarshalBinary(data []byte) error {
-	if len(data) < 5 { // Minimum length for version and type
+	if len(data) < 36 {
 		return errors.New("insufficient data for LatestBlockHashMessage")
 	}
 
@@ -53,21 +53,20 @@ func (m *LatestBlockHashMessage) UnmarshalBinary(data []byte) error {
 	endpointStart := 2 + versionEnd + 1
 	endpointEnd := strings.IndexByte(string(data[endpointStart:]), 0)
 	if endpointEnd == -1 {
-		return errors.New("invalid endpoint string")
+		m.Endpoint = ""
+	} else {
+		m.Endpoint = string(data[endpointStart : endpointStart+endpointEnd])
 	}
-	m.Endpoint = string(data[endpointStart : endpointStart+endpointEnd])
 
-	blockStart := endpointStart + endpointEnd + 1
+	blockStart := len(data) - 36
 	m.LatestBlock = binary.LittleEndian.Uint32(data[blockStart : blockStart+4])
-
-	hashStart := blockStart + 4
-	copy(m.Hash[:], data[hashStart:hashStart+32])
+	copy(m.Hash[:], data[blockStart+4:])
 
 	return nil
 }
 
 func (m *PairsMessage) UnmarshalBinary(data []byte) error {
-	if len(data) < 3 { // Minimum length for version and type
+	if len(data) < 11 {
 		return errors.New("insufficient data for PairsMessage")
 	}
 
@@ -78,21 +77,14 @@ func (m *PairsMessage) UnmarshalBinary(data []byte) error {
 	m.Version = string(data[2 : 2+versionEnd])
 
 	pairsStart := 2 + versionEnd + 1
-	for pairsStart < len(data) {
-		var pair PairData
-		pairEnd, err := pair.UnmarshalBinary(data[pairsStart:])
-		if err != nil {
-			return err
-		}
-		m.Pairs = append(m.Pairs, pair)
-		pairsStart += pairEnd
-	}
+	m.PairsCount = binary.LittleEndian.Uint32(data[pairsStart : pairsStart+4])
+	m.RawPairsData = data[pairsStart+4:]
 
 	return nil
 }
 
 func (p *PairData) UnmarshalBinary(data []byte) (int, error) {
-	if len(data) < 33 { // Minimum length for pair address
+	if len(data) < 32 {
 		return 0, errors.New("insufficient data for PairData")
 	}
 
@@ -132,7 +124,7 @@ func (p *PairData) UnmarshalBinary(data []byte) (int, error) {
 	}
 	current = next
 
-	if len(data[current:]) < 16 { // 8 bytes for price + 8 bytes for volume
+	if len(data[current:]) < 16 {
 		return 0, errors.New("insufficient data for price and volume")
 	}
 
@@ -182,10 +174,19 @@ func main() {
 					fmt.Printf("Received latest block hash: Version=%s, Endpoint=%s, LatestBlock=%d, Hash=%s\n",
 						msg.Version, msg.Endpoint, msg.LatestBlock, hex.EncodeToString(msg.Hash[:]))
 				case *PairsMessage:
-					fmt.Printf("Received pairs message: Version=%s, Number of pairs=%d\n", msg.Version, len(msg.Pairs))
-					for i, pair := range msg.Pairs {
-						fmt.Printf("  Pair %d: Name=%s, Symbol=%s, BaseSymbol=%s, Price=%f, Volume=%f\n",
-							i, pair.TokenName, pair.TokenSymbol, pair.BaseTokenSymbol, pair.Price, pair.Volume)
+					fmt.Printf("Received pairs message: Version=%s, Number of pairs=%d, Raw data length=%d\n",
+						msg.Version, msg.PairsCount, len(msg.RawPairsData))
+
+					// Parse first pair as an example
+					if len(msg.RawPairsData) > 0 {
+						var pair PairData
+						_, err := pair.UnmarshalBinary(msg.RawPairsData)
+						if err != nil {
+							fmt.Println("Error parsing first pair:", err)
+						} else {
+							fmt.Printf("First pair: Name=%s, Symbol=%s, BaseSymbol=%s, Price=%f, Volume=%f\n",
+								pair.TokenName, pair.TokenSymbol, pair.BaseTokenSymbol, pair.Price, pair.Volume)
+						}
 					}
 				default:
 					fmt.Printf("Received unknown message type: %T\n", msg)
