@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 )
 
@@ -15,6 +16,7 @@ type MessageType byte
 const (
 	LatestBlockHashMessageType MessageType = 0x02
 	PairsMessageType           MessageType = 0x00
+	PingMessageType            MessageType = 0x22 // New message type
 )
 
 type LatestBlockHashMessage struct {
@@ -39,6 +41,10 @@ type PairData struct {
 	Volume          float64
 }
 
+type PingMessage struct {
+	Content string
+}
+
 func (m *LatestBlockHashMessage) UnmarshalBinary(data []byte) error {
 	if len(data) < 36 {
 		return errors.New("insufficient data for LatestBlockHashMessage")
@@ -58,9 +64,9 @@ func (m *LatestBlockHashMessage) UnmarshalBinary(data []byte) error {
 		m.Endpoint = string(data[endpointStart : endpointStart+endpointEnd])
 	}
 
-	blockStart := len(data) - 36
-	m.LatestBlock = binary.LittleEndian.Uint32(data[blockStart : blockStart+4])
-	copy(m.Hash[:], data[blockStart+4:])
+	hashStart := len(data) - 36
+	m.LatestBlock = binary.LittleEndian.Uint32(data[hashStart : hashStart+4])
+	copy(m.Hash[:], data[hashStart+4:])
 
 	return nil
 }
@@ -84,7 +90,7 @@ func (m *PairsMessage) UnmarshalBinary(data []byte) error {
 }
 
 func (p *PairData) UnmarshalBinary(data []byte) (int, error) {
-	if len(data) < 32 {
+	if len(data) < 64 {
 		return 0, errors.New("insufficient data for PairData")
 	}
 
@@ -128,10 +134,15 @@ func (p *PairData) UnmarshalBinary(data []byte) (int, error) {
 		return 0, errors.New("insufficient data for price and volume")
 	}
 
-	p.Price = float64(binary.LittleEndian.Uint64(data[current:]))
-	p.Volume = float64(binary.LittleEndian.Uint64(data[current+8:]))
+	p.Price = math.Float64frombits(binary.LittleEndian.Uint64(data[current:]))
+	p.Volume = math.Float64frombits(binary.LittleEndian.Uint64(data[current+8:]))
 
 	return current + 16, nil
+}
+
+func (m *PingMessage) UnmarshalBinary(data []byte) error {
+	m.Content = string(data[1:])
+	return nil
 }
 
 func parseMessage(message []byte) (interface{}, error) {
@@ -151,6 +162,10 @@ func parseMessage(message []byte) (interface{}, error) {
 		var pm PairsMessage
 		err := pm.UnmarshalBinary(message)
 		return &pm, err
+	case PingMessageType:
+		var ping PingMessage
+		err := ping.UnmarshalBinary(message)
+		return &ping, err
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", message[0])
 	}
@@ -188,6 +203,8 @@ func main() {
 								pair.TokenName, pair.TokenSymbol, pair.BaseTokenSymbol, pair.Price, pair.Volume)
 						}
 					}
+				case *PingMessage:
+					fmt.Printf("Received ping message: %s\n", msg.Content)
 				default:
 					fmt.Printf("Received unknown message type: %T\n", msg)
 				}
