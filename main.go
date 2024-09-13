@@ -1,4 +1,3 @@
-// main.go
 package main
 
 import (
@@ -6,9 +5,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"strings"
+
+	"github.com/fatih/color"
 )
 
 type MessageType byte
@@ -150,10 +150,23 @@ func parseMessage(message []byte) (interface{}, error) {
 		return nil, errors.New("empty message")
 	}
 
-	fmt.Printf("Message type: %d, Length: %d\n", message[0], len(message))
-	fmt.Printf("First 20 bytes: %s\n", hex.EncodeToString(message[:20]))
+	msgType := MessageType(message[0])
+	msgSize := len(message)
 
-	switch MessageType(message[0]) {
+	switch msgType {
+	case LatestBlockHashMessageType:
+		color.Cyan("Message type: LatestBlockHash (0x%02x), Size: %d bytes", msgType, msgSize)
+	case PairsMessageType:
+		color.Green("Message type: Pairs (0x%02x), Size: %d bytes", msgType, msgSize)
+	case PingMessageType:
+		color.Yellow("Message type: Ping (0x%02x), Size: %d bytes", msgType, msgSize)
+	default:
+		color.Red("Unknown message type: 0x%02x, Size: %d bytes", msgType, msgSize)
+	}
+
+	fmt.Printf("First 20 bytes: %s\n", hex.EncodeToString(message[:min(20, len(message))]))
+
+	switch msgType {
 	case LatestBlockHashMessageType:
 		var lbhm LatestBlockHashMessage
 		err := lbhm.UnmarshalBinary(message)
@@ -182,14 +195,14 @@ func main() {
 		case message := <-messageChan:
 			parsedMessage, err := parseMessage(message)
 			if err != nil {
-				fmt.Println("Error parsing message:", err)
+				color.Red("Error parsing message: %v", err)
 			} else {
 				switch msg := parsedMessage.(type) {
 				case *LatestBlockHashMessage:
-					fmt.Printf("Received latest block hash: Version=%s, Endpoint=%s, LatestBlock=%d, Hash=%s\n",
+					color.Cyan("Received latest block hash: Version=%s, Endpoint=%s, LatestBlock=%d, Hash=%s",
 						msg.Version, msg.Endpoint, msg.LatestBlock, hex.EncodeToString(msg.Hash[:]))
 				case *PairsMessage:
-					fmt.Printf("Received pairs message: Version=%s, Number of pairs=%d, Raw data length=%d\n",
+					color.Green("Received pairs message: Version=%s, Number of pairs=%d, Raw data length=%d",
 						msg.Version, msg.PairsCount, len(msg.RawPairsData))
 
 					// Parse first pair as an example
@@ -197,21 +210,28 @@ func main() {
 						var pair PairData
 						_, err := pair.UnmarshalBinary(msg.RawPairsData)
 						if err != nil {
-							fmt.Println("Error parsing first pair:", err)
+							color.Red("Error parsing first pair: %v", err)
 						} else {
-							fmt.Printf("First pair: Name=%s, Symbol=%s, BaseSymbol=%s, Price=%f, Volume=%f\n",
+							color.Green("First pair: Name=%s, Symbol=%s, BaseSymbol=%s, Price=%f, Volume=%f",
 								pair.TokenName, pair.TokenSymbol, pair.BaseTokenSymbol, pair.Price, pair.Volume)
 						}
 					}
 				case *PingMessage:
-					fmt.Printf("Received ping message: %s\n", msg.Content)
+					color.Yellow("Received ping message: %s", msg.Content)
 				default:
-					fmt.Printf("Received unknown message type: %T\n", msg)
+					color.Red("Received unknown message type: %T", msg)
 				}
 			}
 		case err := <-errorChan:
-			log.Println("Error:", err)
+			color.Red("Error: %v", err)
 			return
 		}
 	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
