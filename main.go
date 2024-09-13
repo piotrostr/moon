@@ -45,6 +45,11 @@ type PingMessage struct {
 	Content string
 }
 
+func (m *PingMessage) UnmarshalBinary(data []byte) error {
+	m.Content = string(data)
+	return nil
+}
+
 func (m *LatestBlockHashMessage) UnmarshalBinary(data []byte) error {
 	if len(data) < 36 {
 		return errors.New("insufficient data for LatestBlockHashMessage")
@@ -140,11 +145,6 @@ func (p *PairData) UnmarshalBinary(data []byte) (int, error) {
 	return current + 16, nil
 }
 
-func (m *PingMessage) UnmarshalBinary(data []byte) error {
-	m.Content = string(data[1:])
-	return nil
-}
-
 func parseMessage(message []byte) (interface{}, error) {
 	if len(message) == 0 {
 		return nil, errors.New("empty message")
@@ -205,15 +205,17 @@ func main() {
 					color.Green("Received pairs message: Version=%s, Number of pairs=%d, Raw data length=%d",
 						msg.Version, msg.PairsCount, len(msg.RawPairsData))
 
-					// Parse first pair as an example
-					if len(msg.RawPairsData) > 0 {
+					// Parse and print the first 5 pairs
+					for i := 0; i < min(5, int(msg.PairsCount)); i++ {
 						var pair PairData
-						_, err := pair.UnmarshalBinary(msg.RawPairsData)
+						bytesRead, err := pair.UnmarshalBinary(msg.RawPairsData[i*128:])
 						if err != nil {
-							color.Red("Error parsing first pair: %v", err)
+							color.Red("Error parsing pair %d: %v", i, err)
 						} else {
-							color.Green("First pair: Name=%s, Symbol=%s, BaseSymbol=%s, Price=%f, Volume=%f",
-								pair.TokenName, pair.TokenSymbol, pair.BaseTokenSymbol, pair.Price, pair.Volume)
+							color.Green("Pair %d: Name=%s, Symbol=%s, BaseSymbol=%s, Price=%f, Volume=%f",
+								i, pair.TokenName, pair.TokenSymbol, pair.BaseTokenSymbol, pair.Price, pair.Volume)
+							color.Green("  PairAddress: %s", hex.EncodeToString(pair.PairAddress))
+							color.Green("  Bytes read: %d", bytesRead)
 						}
 					}
 				case *PingMessage:
